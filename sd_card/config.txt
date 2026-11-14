@@ -1,0 +1,9 @@
+# Relay configuration (all times UTC)
+# time_on: one or more HH:MM separated by commas (max 8)
+time_on=10:50
+# duration_s: seconds the relay conducts
+duration_s=200
+# days: active weekdays (UTC), 1=Monday ... 7=Sunday
+days=1234567
+# heartbeat_s: blue LED flash period while asleep, 0 = off (each flash costs a short wake)
+heartbeat_s=60
