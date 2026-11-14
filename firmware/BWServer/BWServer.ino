@@ -61,7 +61,8 @@
 #define NTP_REPLY_TIMEOUT_MS 10000UL
 #define NTP_MIN_EPOCH 1700000000L   // anything below this means SNTP has not answered yet
 #define NO_CLOCK_RETRY_S 3600       // sleep length when there is no usable clock or schedule
-#define WAKE_FALLBACK_S 5           // timer wake this long after the RTC alarm, in case INT never fires
+#define WAKE_FALLBACK_S 60          // FIX: was 5; RC timer drifts several s on long sleeps, keep the backup well after the RTC alarm
+#define IMMINENT_S 5                // FIX: activation closer than this -> stay awake and serve it instead of sleeping
 #define HEARTBEAT_FLASH_MS 30
 #define RELAY_LED_FLASH_MS 500
 #define TEST_LED_MODE 1             // 1: green on for the whole pulse + blue end sequence (bench test); 0: 0.5 s green flashes
@@ -272,7 +273,7 @@ time_t nextOccurrence(time_t nowT) {
     if (!cfg.days[tm.tm_wday == 0 ? 7 : tm.tm_wday]) continue;
     for (int i = 0; i < cfg.nTimes; i++) {
       time_t t = base + cfg.times[i] * 60L;
-      if (t > nowT + 2 && (!best || t < best)) best = t;
+      if (t > nowT && (!best || t < best)) best = t;   // FIX: was nowT + 2, which skipped an activation 1-2 s ahead to the next day
     }
   }
   return best;
@@ -317,6 +318,11 @@ void goToSleep() {
     logEvent("SLEEP clock invalid (use NTP/SET); retry in " + String(NO_CLOCK_RETRY_S) + " s");
   } else {
     time_t nowT = toEpoch(now_), next = nextOccurrence(nowT);
+    if (next && next - nowT <= IMMINENT_S) {        // FIX: too close to arm the alarm safely -> wait awake; loop() fires it
+      logEvent("WAIT activation " + isoUtc(next) + " in " + String((long)(next - nowT)) + " s, staying awake");
+      delay((uint32_t)(next - nowT) * 1000UL + 300);
+      return;
+    }
     if (!next) logEvent("SLEEP no schedule; retry in " + String(NO_CLOCK_RETRY_S) + " s");
     else if (!armAlarm(next)) logEvent("ERROR could not arm RTC alarm; retry in " + String(NO_CLOCK_RETRY_S) + " s");
     else {
