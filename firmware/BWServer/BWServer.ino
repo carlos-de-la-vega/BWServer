@@ -11,8 +11,9 @@
 //        /status                -> shows the RTC time (UTC) and the current config values
 //        /start_mission         -> closes the hotspot at once and sleeps (skips the remaining time), shows the next activation
 //      The green LED blinks 1 s on / 1 s off while the hotspot waits for a command. A valid command blinks it once
-//      and stops the blinking; after CMD_GRACE_MS without another command the hotspot closes.
-//      With no command the hotspot closes after AP_DURATION_MS and config.txt is left as it was.
+//      and stops the blinking. Commands do NOT shorten the hotspot: it stays open the full AP_DURATION_MS so a
+//      wrong value can still be corrected; a command in the last CMD_GRACE_MS extends it to CMD_GRACE_MS after
+//      that command. Only /start_mission closes it early. With no command config.txt is left as it was.
 //      When the hotspot closes: blue, green, blue, green (1 s each), then the board sleeps.
 // Blue LED (active HIGH): blink in the NTP window, on during an NTP sync and 1.5 s after a good one; one 30 ms flash
 // every heartbeat_s (config.txt) while asleep = armed and waiting. GPIO0 is a strapping pin, so it is held LOW during sleep.
@@ -55,7 +56,7 @@
 #define AP_DURATION_MS 300000UL     // then: hotspot open this long
 #define AP_SSID "BW_Server"
 #define AP_PASS "server123"         // WPA2 needs 8..63 characters ("server" is too short)
-#define CMD_GRACE_MS 10000UL        // after a valid HTTP command, sleep this long after the last one
+#define CMD_GRACE_MS 60000UL        // minimum hotspot time left after a valid HTTP command (to check it with /status)
 #define CMD_LED_MS 500              // green blink confirming a command
 #define NTP_WIFI_TIMEOUT_MS 20000UL
 #define NTP_REPLY_TIMEOUT_MS 10000UL
@@ -433,12 +434,14 @@ String daysString() {
 
 void sendText(int code, const String &s) { server.send(code, "text/plain", s + "\n"); }
 
-// A valid command was applied: confirm with one green blink, then sleep CMD_GRACE_MS after the last command.
+// A valid command was applied: confirm with one green blink. The hotspot keeps its full time (only
+// /start_mission ends it early); if less than CMD_GRACE_MS is left, extend it to CMD_GRACE_MS from now.
 void commandApplied() {
   digitalWrite(LED_G, HIGH); delay(CMD_LED_MS); digitalWrite(LED_G, LOW);
   cmdSeen = true;
-  awakeUntil = millis() + CMD_GRACE_MS;
-  apEnd = awakeUntil;
+  uint32_t minEnd = millis() + CMD_GRACE_MS;
+  if ((int32_t)(apEnd - minEnd) < 0) apEnd = minEnd;
+  awakeUntil = apEnd;
 }
 
 // Serial only: these run on the WiFi task, so no SD access here.
@@ -686,7 +689,7 @@ void loop() {
       server.handleClient();
       if (!cmdSeen && !relayOn) digitalWrite(LED_G, ((ms / 1000) % 2 == 0) ? HIGH : LOW);   // green blinks 1 s / 1 s while waiting for a command
       if (millis() >= apEnd) {                      // fresh clock read, same as the sleep check below
-        logEvent(missionStart ? "HOTSPOT closed by start_mission" : cmdSeen ? "HOTSPOT closed after command" : "HOTSPOT timeout, config unchanged");
+        logEvent(missionStart ? "HOTSPOT closed by start_mission" : cmdSeen ? "HOTSPOT time over, config changed" : "HOTSPOT timeout, config unchanged");
         stopHotspot();
         endOfHotspotSequence();
       }
